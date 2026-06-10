@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cloudflare IP 优选工具 (TCP筛选 + IP可用性二次筛选 + HTTP Server检测 + curl带宽测速 + WxPusher通知)
+Cloudflare IP 优选工具 (TCP筛选 + IP可用性二次筛选 + HTTP检测 + curl带宽测速 + WxPusher通知)
 依赖：requests, curl (系统自带)
 配置文件：同目录下的 config.json（请根据需要修改参数）
 结果保存到 ip.txt，并自动推送到 GitHub，同时批量更新到 Cloudflare DNS
@@ -711,11 +711,13 @@ def check_http_server(node_str, timeout, max_retries, retry_delay, method):
                 resp = requests.head(url, timeout=timeout, verify=False, allow_redirects=False, headers=headers)
             else:
                 resp = requests.get(url, timeout=timeout, verify=False, allow_redirects=False, headers=headers)
+            if resp.status_code != 400:
+                return (node_str, False, f"status_{resp.status_code}")
             server = resp.headers.get("server", "")
-            if server.lower() == "nginx":
-                return (node_str, False, server)
-            else:
+            if server.lower().startswith("cloudflare"):
                 return (node_str, True, server)
+            else:
+                return (node_str, False, server)
         except requests.exceptions.Timeout:
             if attempt < max_retries:
                 time.sleep(retry_delay)
@@ -782,17 +784,17 @@ def http_server_filter(candidates, config):
     if not config.get("HTTP_TEST_ENABLED", False) or not candidates:
         return candidates
 
-    timeout = config.get("HTTP_TEST_TIMEOUT", 3)
-    max_retries = config.get("HTTP_TEST_MAX_RETRIES", 2)
-    retry_delay = config.get("HTTP_TEST_RETRY_DELAY", 3)
-    workers = config.get("HTTP_TEST_WORKERS", 10)
-    method = config.get("HTTP_TEST_METHOD", "GET")
-    max_rounds = config.get("HTTP_TEST_MAX_ROUNDS", 2)
-    round_delay = config.get("HTTP_TEST_ROUND_DELAY", 3)
+    timeout = HTTP_TEST_TIMEOUT
+    max_retries = HTTP_TEST_MAX_RETRIES
+    retry_delay = HTTP_TEST_RETRY_DELAY
+    workers = HTTP_TEST_WORKERS
+    method = HTTP_TEST_METHOD
+    max_rounds = HTTP_TEST_MAX_ROUNDS
+    round_delay = HTTP_TEST_ROUND_DELAY
 
     for round_num in range(1, max_rounds + 1):
         print(f"\n[HTTP检测] 第 {round_num} 轮检测...")
-        print(f"\n对 {len(candidates)} 个候选节点进行 HTTP Server 二次筛选...")
+        print(f"\n对 {len(candidates)} 个候选节点进行 HTTP 二次筛选...")
 
         passed = []
         total = len(candidates)
@@ -824,8 +826,8 @@ def http_server_filter(candidates, config):
 
     # 全部轮次失败，降级
     send_wxpusher_notification(
-        content=f"HTTP Server 检测经 {max_rounds} 轮重试后仍无节点通过，已降级使用过滤前列表。",
-        summary="HTTP Server 检测全部失败"
+        content=f"HTTP检测经 {max_rounds} 轮重试后仍无节点通过，已降级使用过滤前列表。",
+        summary="HTTP检测全部失败"
     )
     print(f"HTTP检测经 {max_rounds} 轮重试后仍无节点通过，降级使用过滤前候选列表。")
     return candidates
@@ -1240,7 +1242,7 @@ def main():
     print(f"当前模式：{mode_str}，每个节点测试 {TCP_PROBES} 次 TCP 连接")
     print(f"最低成功率要求：{MIN_SUCCESS_RATE*100:.0f}%")
     print(f"IP 可用性二次筛选：{'启用' if TEST_AVAILABILITY else '禁用'}（仅对候选节点）")
-    print(f"HTTP Server 检测：{'启用' if HTTP_TEST_ENABLED else '禁用'}（仅对候选节点）")
+    print(f"HTTP检测：{'启用' if HTTP_TEST_ENABLED else '禁用'}（仅对候选节点）")
     print(f"IPv6 客户端 IP 过滤（仅作用于DNS更新环节）：{'启用' if FILTER_IPV6_AVAILABILITY else '禁用'}")
     print(f"DNS黑名单过滤：{'启用' if FILTER_BLOCKED_COUNTRIES_ENABLED else '禁用'}，黑名单国家：{', '.join(BLOCKED_COUNTRIES)}")
     print(f"IP 风险等级过滤：{'启用' if DNS_IP_RISK_FILTER_ENABLED else '禁用'}（最高允许：{DNS_IP_RISK_MAX_LEVEL}）")
